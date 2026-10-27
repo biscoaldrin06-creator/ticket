@@ -96,21 +96,24 @@ function renderRegister() {
       <div class="card" style="width:400px;">
         <h2 style="margin-bottom:16px;"><i class="fa-solid fa-user-plus"></i> ACCOUNT REGISTRATION</h2>
         <label>Username</label>
-        <input id="reg-user" type="text">
-        <label>Role Level</label>
-        <select id="reg-role">
-          <option value="CUSTOMER">CUSTOMER</option>
-          <option value="STAFF">STAFF</option>
-          <option value="ADMIN">ADMIN</option>
-        </select>
+        <input id="reg-user" type="text" placeholder="Enter username">
+        
         <label>Password</label>
-        <input id="reg-pass" type="password">
+        <input id="reg-pass" type="password" placeholder="Enter password">
+        
         <label>Confirm Password</label>
-        <input id="reg-pass2" type="password">
+        <input id="reg-pass2" type="password" placeholder="Confirm password">
+        
         <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
-          <button class="btn" onclick="handleRegister()"><i class="fa-solid fa-check"></i> REGISTER ACCOUNT</button>
+          <button class="btn" onclick="handleRegister()">
+            <i class="fa-solid fa-check"></i> REGISTER ACCOUNT
+          </button>
           <button class="btn btn-secondary" onclick="renderRoleSelector()">Cancel</button>
         </div>
+        <p style="margin-top:16px;font-size:12px;color:var(--text-muted);text-align:center;">
+          Only Customer accounts can be created here.<br>
+          Staff & Admin accounts are created by Administrator only.
+        </p>
       </div>
     </div>
   `;
@@ -118,9 +121,9 @@ function renderRegister() {
 
 async function handleRegister() {
   const u = $("#reg-user").value.trim();
-  const r = $("#reg-role").value;
   const p = $("#reg-pass").value.trim();
   const p2 = $("#reg-pass2").value.trim();
+
   if (!u || !p) return alert("Required fields cannot be empty.");
   if (p !== p2) return alert("Password confirmation mismatch.");
 
@@ -128,8 +131,13 @@ async function handleRegister() {
     const doc = await db.collection("users").doc(u).get();
     if (doc.exists) return alert("Username is already registered.");
 
-    await db.collection("users").doc(u).set({ password: p, role: r });
-    currentUser = { username: u, role: r };
+    // Force role to CUSTOMER only
+    await db.collection("users").doc(u).set({
+      password: p,
+      role: "CUSTOMER"
+    });
+
+    currentUser = { username: u, role: "CUSTOMER" };
     alert(`Account created successfully for ${u}.`);
     routeDashboard();
   } catch (err) {
@@ -707,7 +715,9 @@ function modalAddUser() {
       <label>Password</label><input id="new-pass" type="password">
       <label>Role Level</label>
       <select id="new-role">
-        <option>CUSTOMER</option><option>STAFF</option><option>ADMIN</option>
+        <option>CUSTOMER</option>
+        <option>STAFF</option>
+        <option>ADMIN</option>
       </select>
       <div style="margin-top:20px;display:flex;gap:10px;">
         <button class="btn" onclick="commitUser()"><i class="fa-solid fa-save"></i> Save User</button>
