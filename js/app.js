@@ -155,7 +155,6 @@ async function handleRegister() {
     const doc = await db.collection("users").doc(u).get();
     if (doc.exists) return alert("Username is already registered.");
 
-    // Force role to CUSTOMER only
     await db.collection("users").doc(u).set({
       password: p,
       role: "CUSTOMER"
@@ -263,6 +262,10 @@ async function renderSeatMap() {
   }
   try {
     const doc = await db.collection("events").doc(activeEventId).get();
+    if (!doc.exists) {
+      map.innerHTML = "<p style='color:var(--danger)'>Event not found</p>";
+      return;
+    }
     const seats = doc.data().seats || {};
     let html = "";
     const codes = Object.keys(seats).sort();
@@ -274,7 +277,7 @@ async function renderSeatMap() {
       const disabled = status === "booked" ? "disabled" : "";
       html += `<button class="seat ${cls}" ${disabled} onclick="toggleSeat('${code}')">${code}</button>`;
     }
-    map.innerHTML = html;
+    map.innerHTML = html || "<p style='color:var(--text-muted)'>No seats available</p>";
   } catch (err) {
     map.innerHTML = "<p style='color:var(--danger)'>Failed to load seats</p>";
   }
@@ -296,15 +299,19 @@ async function updateSummary() {
     $("#summary").innerHTML = "Selected Seats: None<br>Total: ₱0.00";
     return;
   }
-  const doc = await db.collection("events").doc(activeEventId).get();
-  const ev = doc.data();
-  let total = 0;
-  selectedSeats.forEach(code => {
-    const type = ev.seats[code]?.type || "Normal";
-    total += type === "VIP" ? (ev.vip_price || 0) : (ev.normal_price || 0);
-  });
-  const txt = selectedSeats.length ? selectedSeats.join(", ") : "None";
-  $("#summary").innerHTML = `Selected Seats: ${txt} (${selectedSeats.length} tickets)<br>Total: ${money(total)}`;
+  try {
+    const doc = await db.collection("events").doc(activeEventId).get();
+    const ev = doc.data();
+    let total = 0;
+    selectedSeats.forEach(code => {
+      const type = ev.seats[code]?.type || "Normal";
+      total += type === "VIP" ? (ev.vip_price || 0) : (ev.normal_price || 0);
+    });
+    const txt = selectedSeats.length ? selectedSeats.join(", ") : "None";
+    $("#summary").innerHTML = `Selected Seats: ${txt} (${selectedSeats.length} tickets)<br>Total: ${money(total)}`;
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 async function submitBooking() {
@@ -366,8 +373,9 @@ function renderCheckout() {
     </div>
   `;
   db.collection("bookings").doc(activeBookingId).get().then(doc => {
-    const amount = doc.data().amount;
-    $("#checkout-total").innerHTML = `Total Payable: ${money(amount)}`;
+    if (doc.exists) {
+      $("#checkout-total").innerHTML = `Total Payable: ${money(doc.data().amount)}`;
+    }
   });
 }
 
@@ -376,6 +384,8 @@ async function confirmPayment() {
   try {
     const bookingRef = db.collection("bookings").doc(activeBookingId);
     const bookingSnap = await bookingRef.get();
+    if (!bookingSnap.exists) return alert("Booking not found.");
+
     const booking = bookingSnap.data();
 
     await bookingRef.update({
@@ -386,11 +396,13 @@ async function confirmPayment() {
     // Mark seats as booked
     const eventRef = db.collection("events").doc(booking.event_id);
     const eventSnap = await eventRef.get();
-    const seats = eventSnap.data().seats || {};
-    booking.seats.forEach(code => {
-      if (seats[code]) seats[code].status = "booked";
-    });
-    await eventRef.update({ seats });
+    if (eventSnap.exists) {
+      const seats = eventSnap.data().seats || {};
+      booking.seats.forEach(code => {
+        if (seats[code]) seats[code].status = "booked";
+      });
+      await eventRef.update({ seats });
+    }
 
     alert(`Payment successful!\nReference: ${booking.ref_no}`);
     selectedSeats = [];
@@ -612,8 +624,8 @@ function renderAdminView() {
       <button class="btn" onclick="modalAddEvent()"><i class="fa-solid fa-calendar-plus"></i> Publish Events</button>
       <button class="btn btn-danger" onclick="modalDeleteEvent()"><i class="fa-solid fa-calendar-xmark"></i> Delete Events</button>
       <button class="btn" onclick="modalAddUser()"><i class="fa-solid fa-user-plus"></i> User Provisioning</button>
+      <button class="btn" onclick="modalManageUsers()"><i class="fa-solid fa-users-gear"></i> Manage Users</button>
       <button class="btn" onclick="showAnalytics()"><i class="fa-solid fa-chart-line"></i> Financial Analytics</button>
-      <button class="btn btn-secondary" onclick="runBackup()"><i class="fa-solid fa-database"></i> Database Backup</button>
       <button class="btn btn-secondary" onclick="renderStaffView()"><i class="fa-solid fa-clipboard-list"></i> Open Audit View</button>
     </div>
   `;
@@ -758,11 +770,145 @@ async function commitUser() {
   const r = $("#new-role").value;
   if (!u || !p) return alert("Username and Password cannot be empty.");
   try {
+    const exists = await db.collection("users").doc(u).get();
+    if (exists.exists) return alert("Username already exists.");
+    
     await db.collection("users").doc(u).set({ password: p, role: r });
     alert(`Provisioned user '${u}'.`);
     document.querySelector(".modal-overlay").remove();
   } catch (err) {
     alert("Failed user save: " + err.message);
+  }
+}
+
+// ====================== MANAGE USERS (Edit Username / Password / Role) ======================
+async function modalManageUsers() {
+  let rows = "";
+  try {
+    const snap = await db.collection("users").get();
+    snap.forEach(doc => {
+      const u = doc.data();
+      rows += `
+        <tr data-id="${doc.id}">
+          <td>${doc.id}</td>
+          <td>${u.role}</td>
+          <td>
+            <button class="btn" style="padding:6px 12px;font-size:12px;" onclick="openEditUser('${doc.id}', '${u.role}')">
+              <i class="fa-solid fa-pen"></i> Edit
+            </button>
+          </td>
+        </tr>`;
+    });
+  } catch (err) {
+    console.error(err);
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:600px;">
+      <h3 style="color:var(--accent);margin-bottom:16px;"><i class="fa-solid fa-users-gear"></i> MANAGE USERS</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>${rows || "<tr><td colspan='3'>No users found</td></tr>"}</tbody>
+      </table>
+      <div style="margin-top:20px;">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function openEditUser(oldUsername, currentRole) {
+  // Close previous modal
+  document.querySelector(".modal-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3 style="color:var(--accent);margin-bottom:16px;"><i class="fa-solid fa-user-pen"></i> EDIT USER</h3>
+      
+      <label>Current Username</label>
+      <input id="edit-old-username" value="${oldUsername}" disabled style="opacity:0.7;">
+
+      <label>New Username</label>
+      <input id="edit-new-username" value="${oldUsername}" placeholder="Leave same if no change">
+
+      <label>New Password</label>
+      <input id="edit-new-password" type="password" placeholder="Leave blank to keep current password">
+
+      <label>Role</label>
+      <select id="edit-role">
+        <option value="CUSTOMER" ${currentRole === "CUSTOMER" ? "selected" : ""}>CUSTOMER</option>
+        <option value="STAFF" ${currentRole === "STAFF" ? "selected" : ""}>STAFF</option>
+        <option value="ADMIN" ${currentRole === "ADMIN" ? "selected" : ""}>ADMIN</option>
+      </select>
+
+      <div style="margin-top:24px;display:flex;gap:10px;">
+        <button class="btn" onclick="saveEditUser('${oldUsername}')">
+          <i class="fa-solid fa-save"></i> Save Changes
+        </button>
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+async function saveEditUser(oldUsername) {
+  const newUsername = $("#edit-new-username").value.trim();
+  const newPassword = $("#edit-new-password").value.trim();
+  const newRole = $("#edit-role").value;
+
+  if (!newUsername) return alert("Username cannot be empty.");
+
+  try {
+    const oldDoc = await db.collection("users").doc(oldUsername).get();
+    if (!oldDoc.exists) return alert("User not found.");
+
+    const oldData = oldDoc.data();
+
+    // If username is changed
+    if (newUsername !== oldUsername) {
+      // Check if new username already exists
+      const check = await db.collection("users").doc(newUsername).get();
+      if (check.exists) return alert("New username already exists.");
+
+      // Create new document
+      await db.collection("users").doc(newUsername).set({
+        password: newPassword || oldData.password,
+        role: newRole
+      });
+
+      // Delete old document
+      await db.collection("users").doc(oldUsername).delete();
+
+      // If the currently logged-in admin changed their own username
+      if (currentUser.username === oldUsername) {
+        currentUser.username = newUsername;
+      }
+
+      alert(`User updated successfully!\nUsername changed: ${oldUsername} → ${newUsername}`);
+    } else {
+      // Only update password and/or role
+      const updateData = { role: newRole };
+      if (newPassword) updateData.password = newPassword;
+
+      await db.collection("users").doc(oldUsername).update(updateData);
+      alert("User updated successfully!");
+    }
+
+    document.querySelector(".modal-overlay")?.remove();
+  } catch (err) {
+    alert("Failed to update user: " + err.message);
   }
 }
 
@@ -823,28 +969,8 @@ async function showAnalytics() {
   document.body.appendChild(overlay);
 }
 
-async function runBackup() {
-  try {
-    const snapshot = { users: {}, events: {}, bookings: {} };
-    for (const col of ["users", "events", "bookings"]) {
-      const snap = await db.collection(col).get();
-      snap.forEach(doc => {
-        snapshot[col][doc.id] = doc.data();
-      });
-    }
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "system_backup.json";
-    a.click();
-    alert("Database state downloaded as system_backup.json");
-  } catch (err) {
-    alert("Export failed: " + err.message);
-  }
-}
-
 // ====================== BOOT ======================
 (async function () {
-  await bootstrapDefaultAccounts();   // ← creates default accounts if they don't exist
+  await bootstrapDefaultAccounts();
   renderRoleSelector();
 })();
