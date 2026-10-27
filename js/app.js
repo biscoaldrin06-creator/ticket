@@ -1,4 +1,4 @@
-// ====================== FIREBASE CONFIG (from your screenshot) ======================
+// ====================== FIREBASE CONFIG ======================
 const firebaseConfig = {
   apiKey: "AIzaSyBNdtBbS_iNCQ_KqrgUC61Px5JxkXJm4AA",
   authDomain: "ticket-b3b87.firebaseapp.com",
@@ -30,6 +30,30 @@ function money(n) {
 }
 function $(sel) { return document.querySelector(sel); }
 function clearApp() { $("#app").innerHTML = ""; }
+
+// ====================== BOOTSTRAP DEFAULT ACCOUNTS ======================
+async function bootstrapDefaultAccounts() {
+  try {
+    const defaults = [
+      { username: "admin", password: "admin", role: "ADMIN" },
+      { username: "staff", password: "staff", role: "STAFF" },
+      { username: "customer", password: "123", role: "CUSTOMER" }
+    ];
+
+    for (const user of defaults) {
+      const doc = await db.collection("users").doc(user.username).get();
+      if (!doc.exists) {
+        await db.collection("users").doc(user.username).set({
+          password: user.password,
+          role: user.role
+        });
+        console.log(`Created default account: ${user.username}`);
+      }
+    }
+  } catch (err) {
+    console.error("Bootstrap error:", err);
+  }
+}
 
 // ====================== RENDER FUNCTIONS ======================
 function renderRoleSelector() {
@@ -820,4 +844,7 @@ async function runBackup() {
 }
 
 // ====================== BOOT ======================
-renderRoleSelector();
+(async function () {
+  await bootstrapDefaultAccounts();   // ← creates default accounts if they don't exist
+  renderRoleSelector();
+})();
